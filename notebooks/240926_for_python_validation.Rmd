@@ -1,0 +1,426 @@
+---
+title:  "Make Pan-Inhibitory Panel"
+author: "Hannah Schryver"
+date: "Sep 6 2024"
+output: html_notebook
+---
+
+```{r Setup, include=FALSE}
+panel_name <- "pan_inhibitory"
+
+# Number of genes to have in the full panel
+full_panel_size <- 28 
+
+# Staring genes - adding Hpse, Calb2, and Chodl in
+starting_genes <- c("Gad2","Slc17a7","Pvalb","Sst","Vip","Cck","Tac1","Npy","Crh","Necab1","Ptprt","Kirrel3","Penk","Hpse","Calb2","Chodl")
+# Resulting panel when adding the rest of the space
+# starting_genes <- c("Gad2","Slc17a7","Pvalb","Sst","Vip","Cck","Tac1","Npy","Crh","Necab1","Ptprt","Kirrel3","Penk","Hpse","Calb2","Chodl","Pld5","Tcerg1l","Htr2c","Pcdh20","Oxtr","Popdc3","Ndst3","Trhde","Cdh6","Hs3st2","Hcrtr2","Syndig1l")
+# when optimized for supertypes
+# starting_genes<-c("Gad2","Slc17a7","Tac1","Pvalb","Npy","Sst","Vip","Cck","Calb2","Penk","Crh","Ptprt","Hpse","Necab1","Kirrel3","Chodl","Glra2","Htr1f","Rgs6","Hs3st2","Slc44a5","Mybpc1","Stac2","Rgs16","Ndst3","Wipf3","Iqgap2","Sstr1")
+
+# All of Marina's starting genes
+# starting_genes <- c("Gad2","Slc17a7","Pvalb","Sst","Vip","Cck","Tac1","Npy","Crh","Necab1","Ptprt","Kirrel3","Penk","Hpse","Calb2","Chodl", "Sncg", "Chat", "Lhx6", "Lamp5", "Reln", "Vipr2")
+# Resulting full panel
+# starting_genes <- c("Gad2","Slc17a7","Pvalb","Sst","Vip","Cck","Tac1","Npy","Crh","Necab1","Ptprt","Kirrel3","Penk","Hpse","Calb2","Chodl", "Sncg", "Chat", "Lhx6", "Lamp5", "Reln", "Vipr2","Pld5","Sstr1","Cdh6","Oprm1","Pfkfb3","Oxtr")
+# when optimizing for supertypes
+# starting_genes <- c("Gad2","Slc17a7","Tac1","Lamp5","Sst","Penk","Pvalb","Calb2","Reln","Cck","Crh","Npy","Ptprt","Sncg","Vip","Lhx6","Chodl","Kirrel3","Hpse","Chat","Vipr2","Necab1","Wipf3","Cdh6","Slc30a3","Sstr1","Grin2a","Pld5")
+
+# Only map cell types that are present in layers 1-4
+layer_2_3_4_filter <- TRUE
+
+# Replace cluster labels with supertype labels
+use_supertypes <- FALSE
+
+# # Use cell types for excitatory types and replace cluster labels with supertypes for inhibitory cell types
+# blend_supertypes <- FALSE        
+
+# Remove the least informative genes
+remove_bad_genes <- FALSE  
+num_good_genes <- length(starting_genes)  # JK: this is somewhat weird... now we are not removing any gene from the initial panel
+
+```
+
+```{r Set paths}
+data_folder   <- "\\\\allen/programs/mindscope/workgroups/omfish/hannahs/mfish_project/gene_panels/L23_inh_panel/Mm_VISp_14236_20180912/"
+output_folder <- paste0("\\\\allen/programs/mindscope/workgroups/learning/jinho/gene_panel_selection/inhibitory")
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = output_folder)
+```
+
+
+```{r Load libraries}
+# Detach all packages (if any)
+nm = names(sessionInfo()$otherPkgs)
+if(!is.null(nm))
+  invisible(lapply(paste0('package:', nm), detach, character.only=TRUE, unload=TRUE))
+
+# Load all packages
+suppressPackageStartupMessages({
+  library(mfishtools)                   # Panel generation and mappign functions
+  library(scrattch.vis)                 # This is for plotting gene panels
+  library(matrixStats)                  # For rowMedians function
+  library(feather)                      # If loading data from Allen drive
+  library(gplots)                       # For heatmap.2
+  library(ggplot2)                      
+  library(gridExtra)                    # For combining plots
+  # library(anndata)                    # If loading data in AnnData format
+  library(xlsx)
+  library(viridisLite)
+  library(viridis)
+})
+options(stringsAsFactors = FALSE)
+print("Libraries loaded.")
+
+# File and folder locations
+setwd(output_folder)
+
+```
+
+```{r Load and reformat data}
+# Load the RNAseq data annotations
+anno    <- read_feather(paste0(data_folder,"anno.feather"))
+
+# Load the RNAseq data
+data    <- feather(paste0(data_folder,"data_t.feather"))
+
+# Reformat
+data <- data[,colnames(data)!='X']
+colnames(data)[2:length(colnames(data))]<-gsub('\\.','-',colnames(data)[2:length(colnames(data))])
+exp_data <- as.matrix(data[,colnames(data)!="gene"])
+rownames(exp_data) <- data$gene
+anno    <- anno[match(colnames(exp_data),anno$sample_id),]  # Put them in the correct order
+anno<-anno[,colnames(anno)!='X']
+
+```
+
+Replace cell types with supertypes (if selected)
+```{r Replace cell types with supertypes (if selected)}
+# Load the manually defined supertypes and add to anno
+supertypes <-as.data.frame(read.xlsx('\\\\allen/programs/mindscope/workgroups/omfish/hannahs/mfish_project/gene_panels/L23_inh_panel/supertypes.xlsx',paste0('GABAergic')))
+supertypes$cluster <- iconv(supertypes$cluster, from = 'UTF-8', to = 'ASCII//TRANSLIT')
+supertypes$supertype <- iconv(supertypes$supertype, from = 'UTF-8', to = 'ASCII//TRANSLIT')
+# anno$cluster_label_original <- anno$cluster_label
+anno$supertype_label <- as.character(supertypes$supertype)[match(anno$cluster_label,as.character(supertypes$cluster))]
+anno$supertype_label[is.na(anno$supertype_label)]<-anno$cluster_label[is.na(anno$supertype_label)]
+
+```
+
+```{r Find cell types in relevant layers classes, etc}
+# Panel neuronal
+# keep_class <- c("GABAergic","Glutamatergic")
+keep_class <- c("GABAergic")
+
+# Get the types labels and number of cells
+tab <- table(anno$cluster_label[(anno$class_label %in% keep_class)])
+
+# If only mapping to cell types predominantly in layers 1-4 
+if (layer_2_3_4_filter){ 
+  # Layers 1-4 excitatory types
+  # L234_exc_types <- sort(unique(anno$cluster_label[anno$subclass_label %in% c('L2/3 IT','L4')]))
+  
+  # Layers 5 excitatory types
+  # L5_exc_types <- sort(unique(anno$cluster_label[anno$subclass_label %in% c("L5 IT", "L5 PT","NP")]))
+  
+  # Inhibitory types layer distributions
+  cluster_layers = table(anno$layer_label[(anno$class_label %in% keep_class)],anno$cluster_label[(anno$class_label %in% keep_class)])
+  cluster_layers = round(100*t(cluster_layers)/colSums(cluster_layers))
+  
+  # Inhibitory types with enough cells in upper layers that we'll need to map them (at least 25%)
+  L234_inh_types <- sort(rownames(cluster_layers)[(rowSums(cluster_layers[,c('L1','L1-L2/3','L1-L4','L2/3','L2/3-L4','L4')])>=15)]) 
+  
+  # Remaining inhibitory types
+  not_L234_inh_types <- rownames(cluster_layers)[!rownames(cluster_layers) %in% L234_inh_types]
+
+  # Types predominantly in layer 6 (over 75%)
+  L6_inh_types <- sort(rownames(cluster_layers)[(rowSums(cluster_layers[,c('L5-L6','L6','L6b')])>=75)])
+  
+  # The rest considered layer 5 types
+  L5_inh_types <- not_L234_inh_types[!not_L234_inh_types %in% L6_inh_types]
+  
+  # Combine
+  # keep_types <- c(L234_exc_types,L234_inh_types)
+  keep_types <- c(L234_inh_types)
+  tab <- tab[keep_types]
+}
+keep_clusts <- sort(unique(names(tab[tab>1])))
+
+#View(as.data.frame.matrix(table(anno$cluster_label[(anno$class_label %in% keep_class)])))
+
+# Combine the inhibitory layer 5 types into subclasses to map
+l5_inh_cluster_labels<-c()
+for (clust in L5_inh_types){
+  type_subclass <- unique(anno$subclass_label[anno$cluster_label == clust])
+  type_subclass <- type_subclass[!is.na(type_subclass)]
+  clust_label <- paste0('L5 Inh ',type_subclass)
+  anno$cluster_label[anno$cluster_label == clust] <- clust_label
+  l5_inh_cluster_labels <- c(l5_inh_cluster_labels,clust_label)
+}
+l5_inh_cluster_labels<-unique(l5_inh_cluster_labels)
+
+# If replacing all cluster labels with supertype labels
+if (use_supertypes){
+  keep_clusts <-  unique(anno$supertype_label[anno$cluster_label %in% keep_clusts])
+  L5_inh_types <- unique(anno$supertype_label[anno$cluster_label %in% L5_inh_types])
+  anno$cluster_label_original <- anno$cluster_label
+  anno$cluster_label <- anno$supertype_label
+  anno$cluster_label[anno$cluster_label_original %in% l5_inh_cluster_labels] <- anno$cluster_label_original[anno$cluster_label_original %in% l5_inh_cluster_labels]
+}
+
+# keep_clusts <- sort(unique(c(keep_clusts,'L5 Exc',l5_inh_cluster_labels)))
+keep_clusts <- sort(unique(c(keep_clusts,l5_inh_cluster_labels)))
+
+
+```
+
+
+
+```{r Make sure all the genes are present in the reference data}
+# If the gene names are in various cases
+# starting_genes <- tolower(starting_genes)
+# rownames(exp_data)<-tolower(rownames(exp_data))
+
+# Remove starting genes that aren't in the data
+if (length(starting_genes[!starting_genes %in% rownames(exp_data)])>0){
+  print(paste0(starting_genes[!starting_genes %in% rownames(exp_data)], ' not in data!',collapse=", "))
+  starting_genes <- starting_genes[starting_genes %in% rownames(exp_data)]
+}
+# 
+
+```
+
+```{r Convert to log2}
+norm_exp_data = log2(exp_data+1)
+```
+
+```{r Calculate proportions and medians}
+cl <- setNames(anno$cluster_label,colnames(norm_exp_data))
+expr_thresh = 1
+median_expr = do.call("cbind", tapply(names(cl), cl, function(x) rowMedians(norm_exp_data[,x]))) 
+prop_expr   = do.call("cbind", tapply(names(cl), cl, function(x) rowMeans(norm_exp_data[,x]>expr_thresh))) 
+rownames(median_expr) <- rownames(prop_expr) <- genes <- rownames(norm_exp_data)  
+
+```
+
+```{r save prop_expr and median_expr}
+write.csv(prop_expr, file = paste0(output_folder, "/prop_expr_tmp_R.csv"), row.names = TRUE)
+write.csv(median_expr, file = paste0(output_folder, "/median_expr_tmp_R.csv"), row.names = TRUE)
+```
+
+
+```{r Filter gene sets}
+start   <- as.character(starting_genes)
+panel_off_clusts <- unique(anno$cluster_label[anno$class_label=="Non-Neuronal"])
+run_genes <- filterPanelGenes(
+  summaryExpr = 2^median_expr-1,  # Medians (could also try means); We enter linear values to match the linear limits below
+  propExpr   = prop_expr,         # Proportions
+  onClusters  = keep_clusts,      # Clusters of interest for gene panel
+  offClusters = panel_off_clusts, # Clusters to exclude expression (in this case, non-neuronal clusters)
+  geneLengths = NULL,             # Vector of gene lengths if available
+  startingGenes  = start,         # Starting genes (from above)
+  numBinaryGenes = 300,           # Number of binary genes (explained below)
+  minOn     = 10,                 # Minimum required expression in highest expressing cell type
+  maxOn     = 300,                # Maximum allowed expression (Not used in this case)
+  maxOff    = 10,                 # Maximum allowed expression in off types (In this case, infinity since we don't want this filter)
+  minLength = 1400,               # Minimum gene length (to allow probe design; ignored in this case)
+  fractionOnClusters = 0.5,       # Max fraction of on clusters (described above)
+  excludeGenes    = NULL,         # Genes to exclude.  Often sex chromosome or mitochondrial genes would be input here.
+  excludeFamilies = c("LOC","Fam","RIK","RPS","RPL","\\-","Gm","Rnf","BC0")) # Avoid unannotated markers
+
+# passing_genes <- starting_genes[starting_genes %in% rownames(median_expr)]  # JK: maybe just in case? they should be the same
+
+
+# run_genes <- union(run_genes,passing_genes) # JK: maybe just in case? run_genes should include passing_genes (or starting_genes), from filterPanelGenes
+cat("\n",paste(length(run_genes),"genes pass filters\n")) 
+
+# JK: save run_genes in csv
+write.csv(run_genes, file = paste0(output_folder,"/run_genes_tmp_inh_R.csv"), row.names = FALSE)
+
+
+```
+
+
+```{r checkpoint - filtering function}
+summaryExpr <- 2^median_expr-1  # Medians (could also try means); We enter linear values to match the linear limits below
+propExpr   <- prop_expr         # Proportions
+onClusters  <- keep_clusts      # Clusters of interest for gene panel
+offClusters <- panel_off_clusts # Clusters to exclude expression (in this case, non-neuronal clusters)
+geneLengths <- NULL             # Vector of gene lengths if available
+startingGenes  <- start         # Starting genes (from above)
+numBinaryGenes <- 300           # Number of binary genes (explained below)
+minOn     <- 10                 # Minimum required expression in highest expressing cell type
+maxOn     <- 300                # Maximum allowed expression (Not used in this case)
+maxOff    <- 10                 # Maximum allowed expression in off types (In this case, infinity since we don't want this filter)
+minLength <- 1400               # Minimum gene length (to allow probe design; ignored in this case)
+fractionOnClusters <- 0.5       # Max fraction of on clusters (described above)
+excludeGenes    <- NULL         # Genes to exclude.  Often sex chromosome or mitochondrial genes would be input here.
+excludeFamilies <- c("LOC","Fam","RIK","RPS","RPL","\\-","Gm","Rnf","BC0")
+
+onThreshold <- 0.5
+
+
+fractionOnClusters = fractionOnClusters[1]
+if (fractionOnClusters > 1) 
+    fractionOnClusters = fractionOnClusters/100
+genes <- rownames(summaryExpr)
+genesU <- toupper(genes)
+excludeFamilies <- toupper(excludeFamilies)
+excludeGenes <- is.element(genes, excludeGenes)
+if (length(excludeFamilies) > 0) {
+    for (i in 1:length(excludeFamilies)) {
+        excludeGenes <- excludeGenes | grepl(excludeFamilies[i], 
+            genesU)
+    }
+}
+if (is.character(onClusters)) {
+    onClusters <- is.element(colnames(summaryExpr), onClusters)
+}
+if (is.numeric(onClusters)) {
+    onClusters <- is.element(1:dim(summaryExpr)[2], onClusters)
+}
+if (sum(onClusters) < 2) {
+    stop("Please provide at least two onClusters.  If cluster names were provided, check colnames(summaryExpr).")
+}
+if (is.character(offClusters)) {
+    offClusters <- is.element(colnames(summaryExpr), offClusters)
+}
+if (is.numeric(offClusters)) {
+    offClusters <- is.element(1:dim(summaryExpr)[2], offClusters)
+}
+
+maxExprOn <- apply(summaryExpr[, onClusters], 1, max)
+if (sum(offClusters) > 1) {
+    maxExprOff <- apply(summaryExpr[, offClusters], 1, max)
+} else if (sum(offClusters) == 1) {
+    maxExprOff <- summaryExpr[, offClusters]
+} else {
+    maxExprOff <- pmax(maxExprOn, 1e-07) * -Inf
+}
+
+if (!is.null(geneLengths)) {
+    if (length(geneLengths) != length(offClusters)) {
+        stop("geneLengths must be in the same order and of same length as rows of summaryExpr.")
+    }
+}
+if (!is.null(geneLengths)) {
+    if (!is.numeric(geneLengths)) {
+        stop("geneLengths must be numeric.")
+    }
+}
+if (is.null(geneLengths)) {
+    geneLengths <- maxExprOn + Inf
+}
+keepGenes <- (!excludeGenes) & (maxExprOn > minOn) & (maxExprOn <= 
+    maxOn) & (maxExprOff <= maxOff) & (geneLengths >= minLength) & 
+    (rowMeans(propExpr[, onClusters] > onThreshold) <= fractionOnClusters) & 
+    (rowMeans(propExpr[, onClusters] > onThreshold) > 0)
+keepGenes[is.na(keepGenes)] <- FALSE
+
+```
+```{r }
+write.csv(keepGenes, file = paste0(output_folder,"/keepGenes_tmp_inh_R.csv"))
+```
+
+
+```{r }
+topBetaScores <- getBetaScore(propExpr[keepGenes, onClusters], TRUE)
+write.csv(topBetaScores, file = paste0(output_folder,"/topBeta_scores_tmp_inh_R.csv"))
+topBeta <- getBetaScore(propExpr[keepGenes, onClusters], FALSE)
+write.csv(topBeta, file = paste0(output_folder,"/topBeta_tmp_inh_R.csv"))
+```
+
+
+```{r Build initial gene panels based on passing genes without any subsampling}
+
+start_time <- proc.time()
+#source("/allen/programs/mindscope/workgroups/omfish/hannahs/mfish_project/gene_panels/buildMappingBasedMarkerPanel_v2.R") #for debugging
+## Subsample cells from each cluster which decreases the time for the algorithm to run and also more evenly weights the clusters for gene selection
+# keep_clusts_no_layer_diffs <- setdiff(keep_clusts,l5_inh_cluster_labels)
+
+
+keep_sampled_cells  <- is.element(anno$cluster_label,keep_clusts)
+
+# Initialize matrix
+built_panel <- panel_correct <- matrix(0,nrow=ps,ncol=1)
+colnames(built_panel) <- colnames(panel_correct) <- panel_name
+start   <- as.character(starting_genes)
+
+## Order the starting genes
+built_panel <- suppressWarnings(buildMappingBasedMarkerPanel(
+  mapDat        = norm_exp_data[run_genes,keep_sampled_cells], # Data for optimization
+  medianDat     = median_expr[run_genes,keep_clusts],          # Median expression levels of relevant genes in relevant clusters
+  clustersF     = cl[keep_sampled_cells],                          # Vector of cluster assignments
+  panelSize     = full_panel_size,                          # Final panel size
+  currentPanel  = start,         # Starting gene panel - if we want specific genes always at the beginning of the ordered list
+  subSamp       = NA, # To not subsample
+  writeText     = TRUE,                                            # Write the results to the screen as we go
+  panelMin      = 3,                                               # Start with this number of genes
+#   optimize      = 'CorrelationDistance'                                # FractionCorrect minimizes assignment errors and is only used for the initial gene sets
+  optimize      = 'fractionCorrect'
+))
+end_time <- proc.time()
+print(paste("Elapsed time for building the panel:",end_time-start_time))
+```
+
+
+
+```{r save built_panel}
+
+panel_correct <- fractionCorrectWithGenes(built_panel,norm_exp_data[,keep_sampled_cells],median_expr[,keep_clusts],cl[keep_sampled_cells],plot=FALSE)
+panel_scaled <- t(t(panel_correct)/max(panel_correct))
+
+
+# JK save the results, combining gene_panel and panel_correct, after making them as dataframes
+selection_results <- data.frame(Gene = built_panel, Accuracy = panel_correct)
+# save selection_results
+# write.csv(selection_results, file = paste0(output_folder, "/gene_panel_selection_results_seed", seed, ".csv"), row.names = FALSE)
+write.csv(selection_results, file = paste0(output_folder, "/gene_panel_selection_results_nosubsample_fraction_correct_R.csv"), row.names = FALSE)
+
+
+```
+
+```{r save input data}
+mapDat <- norm_exp_data[run_genes,keep_sampled_cells]
+write.csv(mapDat, file = paste0(output_folder,"/mapDat_tmp_inh_R.csv"), row.names = TRUE)
+medianDat <- median_expr[run_genes,keep_clusts]
+write.csv(medianDat, file = paste0(output_folder,"/medianDat_tmp_inh_R.csv"), row.names = TRUE)
+clustersF <- cl[keep_sampled_cells]
+write.csv(clustersF, file = paste0(output_folder,"/clustersF_tmp_inh_R.csv"), row.names = TRUE)
+```
+
+
+```{r inside the function of buildMappingBasedMarkerPanel}
+corDist <- function(x) return(as.dist(1 - WGCNA::cor(x)))
+clusterGenes = rownames(medianDat)
+clusterGenes <- intersect(clusterGenes, rownames(medianDat))
+clusterDistance <- as.matrix(corDist(medianDat[clusterGenes, 
+                ]))
+write.csv(clusterDistance, file = paste0(output_folder,"/clusterDistance_tmp_inh_R.csv"), row.names = TRUE)
+```
+
+```{r corTreeMapping test}
+currentPanel  = start
+otherGenes <- setdiff(rownames(mapDat), currentPanel)
+# sort otherGenes disregarding case
+otherGenes <- otherGenes[order(tolower(otherGenes))]
+gene <- otherGenes[1]
+ggnn <- c(currentPanel, gene)
+corMapTmp <- corTreeMapping(mapDat = mapDat, 
+                medianDat = medianDat, genesToMap = ggnn)
+write.csv(corMapTmp, file = paste0(output_folder,"/corMapTmp_tmp_inh_R.csv"), row.names = TRUE)
+```
+
+```{r get_top_match}
+topLeafTmp <- getTopMatch(corMapTmp)
+write.csv(topLeafTmp, file = paste0(output_folder,"/topLeafTmp_tmp_inh_R.csv"), row.names = TRUE)
+```
+
+```{r match_count test}
+if (is.matrix(clusterDistance)) {
+    clusterDistance <- clusterDistance[colnames(medianDat), 
+                    colnames(medianDat)]
+    clusterDistance <- as.vector(clusterDistance)
+}
+clustIndex <- match(clustersF, colnames(medianDat))
+tmpVal <- dim(medianDat)[2] * (match(topLeafTmp[,1], colnames(medianDat)) - 1) + clustIndex
+matchCountTmp <- -mean(clusterDistance[tmpVal])
+```
