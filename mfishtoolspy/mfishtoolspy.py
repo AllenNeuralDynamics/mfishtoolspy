@@ -12,7 +12,7 @@ from dask.distributed import Client
 import dask
 
 
-def build_mapping_based_marker_panel_testing(map_data, mapping_median_data=None, mapping_call=None, 
+def build_mapping_based_marker_panel(map_data, mapping_median_data=None, mapping_call=None, 
                                     mapping_to_group=None, group_median_data=None, num_iter_each_addition=100,
                                     panel_size=50, num_subsample=50, na_str='None', use_parallel=True,
                                     max_fc_gene=1000, qmin=0.75, seed=None, current_panel=None, current_metric=None,
@@ -29,6 +29,7 @@ def build_mapping_based_marker_panel_testing(map_data, mapping_median_data=None,
     mapping_median_data (pd.DataFrame): Precomputed medians for clustering mapping. If None, it is computed.
     mapping_call (pd.Series): Mapping assignment of the columns in map_data.
     mapping_to_group (pd.DataFrame): Grouping assignment of the columns in map_data. If None, all the mappings will be used.
+    group_median_data (pd.DataFrame): Precomputed medians for grouping. If None, it is computed.
     num_iter_each_addition (int): Number of iterations to add each gene. If num_subsample is None, this is ignored.
     panel_size (int): Number of genes to include in the panel.
     num_subsample (int): Number of cells to subsample from each group.
@@ -132,21 +133,21 @@ def build_mapping_based_marker_panel_testing(map_data, mapping_median_data=None,
         
         
         if use_parallel:
-            client = Client()
-            task = []
-            if seed is None:
-                tasks = [delayed(_run_one_iter_parallel)(map_data, group_call, mapping_call, num_subsample, 
-                                                         seed, mapping_median_data, other_genes, current_panel, 
-                                                         group_distance, mapping_to_group, corr_mapping, 
-                                                         na_str=na_str) for iter_num in range(num_iter_each_addition)]
-            else:
-                tasks = [delayed(_run_one_iter_parallel)(map_data, group_call, mapping_call, num_subsample, 
-                                                         seed_iter, mapping_median_data, other_genes, current_panel, 
-                                                         group_distance, mapping_to_group, corr_mapping, 
-                                                         na_str=na_str) for seed_iter in range(seed, seed + num_iter_each_addition)]
-                seed += num_iter_each_addition
-            results = compute(*tasks, num_workers=dask.system.cpu_count()-1)
-            client.close()
+            with Client() as client:
+                task = []
+                if seed is None:
+                    tasks = [delayed(_run_one_iter_parallel)(map_data, group_call, mapping_call, num_subsample, 
+                                                            seed, mapping_median_data, other_genes, current_panel, 
+                                                            group_distance, mapping_to_group, corr_mapping, 
+                                                            na_str=na_str) for iter_num in range(num_iter_each_addition)]
+                else:
+                    tasks = [delayed(_run_one_iter_parallel)(map_data, group_call, mapping_call, num_subsample, 
+                                                            seed_iter, mapping_median_data, other_genes, current_panel, 
+                                                            group_distance, mapping_to_group, corr_mapping, 
+                                                            na_str=na_str) for seed_iter in range(seed, seed + num_iter_each_addition)]
+                    seed += num_iter_each_addition
+                results = compute(*tasks, num_workers=dask.system.cpu_count()-1)
+                client.close()
 
             match_count = np.stack(results)
 
@@ -175,13 +176,16 @@ def build_mapping_based_marker_panel_testing(map_data, mapping_median_data=None,
         
         current_panel.append(gene_to_add)
         
-        current_panel, current_metric = build_mapping_based_marker_panel_testing(map_data=map_data, mapping_median_data=mapping_median_data, mapping_call=mapping_call, 
-                                                       mapping_to_group=mapping_to_group, group_median_data=group_median_data, num_iter_each_addition=100,
-                                                       panel_size=panel_size, num_subsample=num_subsample, na_str=na_str, use_parallel=use_parallel,
-                                                       max_fc_gene=max_fc_gene, qmin=qmin, seed=seed, current_panel=current_panel, current_metric=current_metric,
-                                                       panel_min=panel_min, verbose=verbose, corr_mapping=corr_mapping, 
-                                                       optimize=optimize, group_distance=group_distance, 
-                                                       cluster_genes=cluster_genes, dend=dend, percent_gene_subset=percent_gene_subset)
+        current_panel, current_metric = \
+            build_mapping_based_marker_panel(map_data=map_data, mapping_median_data=mapping_median_data,
+                mapping_call=mapping_call, mapping_to_group=mapping_to_group,
+                group_median_data=group_median_data, num_iter_each_addition=num_iter_each_addition,
+                panel_size=panel_size, num_subsample=num_subsample, na_str=na_str,
+                use_parallel=use_parallel, max_fc_gene=max_fc_gene, qmin=qmin, seed=seed,
+                current_panel=current_panel, current_metric=current_metric,
+                panel_min=panel_min, verbose=verbose, corr_mapping=corr_mapping, 
+                optimize=optimize, group_distance=group_distance, cluster_genes=cluster_genes,
+                dend=dend, percent_gene_subset=percent_gene_subset)
     return current_panel, current_metric
 
 
@@ -236,7 +240,7 @@ def _run_one_iter(map_data, mapping_median_data, other_genes, current_panel,
 
 
 
-def build_mapping_based_marker_panel(map_data, median_data=None, cluster_call=None, panel_size=50, num_subsample=20, 
+def build_mapping_based_marker_panel_archived(map_data, median_data=None, cluster_call=None, panel_size=50, num_subsample=20, 
                                     max_fc_gene=1000, qmin=0.75, seed=None, current_panel=None, 
                                     panel_min=5, verbose=True, corr_mapping=True, 
                                     optimize="fraction_correct", cluster_distance=None, 
@@ -744,7 +748,7 @@ def filter_panel_genes(summary_expr, prop_expr=None, on_clusters=None, off_clust
     run_genes = genes[keep_genes][top_beta <= num_binary_genes]
     run_genes = sorted(list(set(run_genes).union(starting_genes)))
     
-    return run_genes, filtered_out_genes
+    return run_genes, keep_genes, filtered_out_genes
 
 
 
