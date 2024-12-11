@@ -9,6 +9,10 @@
 
 ## How to install
 ```
+pip install mfishtoolspy
+```
+Or
+```
 git clone https://github.com/AllenNeuralDynamics/mfishtoolspy.git
 cd mfishtoolspy
 pip install -e .
