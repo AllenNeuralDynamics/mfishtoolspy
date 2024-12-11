@@ -8,6 +8,12 @@
 - This is still in active development (as of 12/10/2024)
 
 ## How to install
-`git clone https://github.com/AllenNeuralDynamics/mfishtoolspy.git`
-`cd mfishtoolspy`
-`pip install -e .`
+```
+pip install mfishtoolspy
+```
+Or
+```
+git clone https://github.com/AllenNeuralDynamics/mfishtoolspy.git
+cd mfishtoolspy
+pip install -e .
+```
