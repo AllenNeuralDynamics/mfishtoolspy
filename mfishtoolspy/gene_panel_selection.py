@@ -22,10 +22,15 @@ def build_mapping_based_marker_panel(map_data, mapping_median_data=None, mapping
 
     Parameters:
     map_data (pd.DataFrame): Data to be mapped.
+        gene x sample matrix
     mapping_median_data (pd.DataFrame): Precomputed medians for clustering mapping. If None, it is computed.
+        gene x cluster matrix
     mapping_call (pd.Series): Mapping assignment of the columns in map_data.
+        cell x mapping label matrix
     mapping_to_group (pd.DataFrame): Grouping assignment of the columns in map_data. If None, all the mappings will be used.
+        mapping label x group label matrix
     group_median_data (pd.DataFrame): Precomputed medians for grouping. If None, it is computed.
+        gene x group matrix
     num_iter_each_addition (int): Number of iterations to add each gene. If num_subsample is None, this is ignored.
     panel_size (int): Number of genes to include in the panel.
     num_subsample (int): Number of cells to subsample from each group.
